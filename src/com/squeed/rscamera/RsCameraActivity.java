@@ -10,7 +10,10 @@ import android.hardware.Camera;
 import android.hardware.Camera.CameraInfo;
 import android.hardware.Camera.Size;
 import android.os.Bundle;
+import android.renderscript.Allocation;
+import android.renderscript.Element;
 import android.renderscript.Matrix3f;
+import android.renderscript.RenderScript;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -27,10 +30,18 @@ public class RsCameraActivity extends Activity {
 
     // The first rear facing camera
     int defaultCameraId;
+    
+    static RenderScript mRS;
+    static ScriptC_yuvtorgb mYUVScript;
+    static Allocation rsYuvData;
+	static Allocation rsRgbData;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        
+        mRS = RenderScript.create(this);
+        mYUVScript = new ScriptC_yuvtorgb(mRS, getResources(), R.raw.yuvtorgb);
 
         // Hide the window title.
         requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -96,11 +107,18 @@ Camera.PreviewCallback {
     Size mPreviewSize;
     List<Size> mSupportedPreviewSizes;
     Camera mCamera;
+    
+    
 
 	private int[] rgbData = new int[480*800];
 
-    Preview(Context context) {
+	
+
+    public Preview(Context context) {
         super(context);
+        
+        
+        
         setSaturation();
         mSurfaceView = new SurfaceView(context);
         addView(mSurfaceView);
@@ -122,11 +140,7 @@ Camera.PreviewCallback {
 
     public void switchCamera(Camera camera) {
        setCamera(camera);
-//       try {
-//           camera.setPreviewDisplay(mHolder);
-//       } catch (IOException exception) {
-//           Log.e(TAG, "IOException caused by setPreviewDisplay()", exception);
-//       }
+
        Camera.Parameters parameters = camera.getParameters();
        parameters.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
        requestLayout();
@@ -178,15 +192,6 @@ Camera.PreviewCallback {
 
     public void surfaceCreated(SurfaceHolder holder) {
     	setWillNotDraw(true);
-        // The Surface has been created, acquire the camera and tell it where
-        // to draw.
-//        try {
-//            if (mCamera != null) {
-//                mCamera.setPreviewDisplay(holder);
-//            }
-//        } catch (IOException exception) {
-//            Log.e(TAG, "IOException caused by setPreviewDisplay()", exception);
-//        }
     	mCamera.setPreviewCallback(this);
     }
 
@@ -234,6 +239,12 @@ Camera.PreviewCallback {
     public void surfaceChanged(SurfaceHolder holder, int format, int w, int h) {
         // Now that the size is known, set up the camera parameters and begin
         // the preview.
+    	
+    	// YUV use 50% more space than RGB
+    	double yuvSize = w*h*1.5;
+    	RsCameraActivity.rsYuvData = Allocation.createSized(RsCameraActivity.mRS, Element.U8(RsCameraActivity.mRS),new Double(yuvSize).intValue());
+    	RsCameraActivity.rsRgbData = Allocation.createSized(RsCameraActivity.mRS, Element.U8(RsCameraActivity.mRS),new Double(yuvSize).intValue());
+    	
         Camera.Parameters parameters = mCamera.getParameters();
         parameters.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
         requestLayout();
@@ -252,10 +263,14 @@ Camera.PreviewCallback {
 
         try {
             //synchronized (mHolder) {
-                c = mHolder.lockCanvas();
-                decodeYUV420SP(rgbData, data, 800, 480);
-                filter(rgbData);
+        		RsCameraActivity.rsYuvData.copyFrom(data);
+        		c = mHolder.lockCanvas();
+                
+                RsCameraActivity.mYUVScript.forEach_root(RsCameraActivity.rsYuvData, RsCameraActivity.rsRgbData);
+                //decodeYUV420SP(rgbData, data, 800, 480);
+                //filter(rgbData);
                 // TODO do renderscript based levels stuff here
+                RsCameraActivity.rsRgbData.copyTo(rgbData);
                 c.drawBitmap(rgbData, 0, 800, 0, 0, 800, 480, false, new Paint());
 
             //}
