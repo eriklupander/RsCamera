@@ -1,19 +1,19 @@
 package com.squeed.rscamera;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.hardware.Camera;
 import android.hardware.Camera.CameraInfo;
 import android.hardware.Camera.Size;
 import android.os.Bundle;
-import android.renderscript.Allocation;
-import android.renderscript.Element;
 import android.renderscript.Matrix3f;
-import android.renderscript.RenderScript;
+import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -23,6 +23,10 @@ import android.view.WindowManager;
 
 public class RsCameraActivity extends Activity {
 	
+	static {
+        System.loadLibrary("rscamera");
+    }
+	
 	private Preview mPreview;
     Camera mCamera;
     int numberOfCameras;
@@ -31,17 +35,20 @@ public class RsCameraActivity extends Activity {
     // The first rear facing camera
     int defaultCameraId;
     
-    static RenderScript mRS;
-    static ScriptC_yuvtorgb mYUVScript;
-    static Allocation rsYuvData;
-	static Allocation rsRgbData;
+	
+	
+    
+//    static RenderScript mRS;
+//    static ScriptC_yuvtorgb mYUVScript;
+//    static Allocation rsYuvData;
+//	static Allocation rsRgbData;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        mRS = RenderScript.create(this);
-        mYUVScript = new ScriptC_yuvtorgb(mRS, getResources(), R.raw.yuvtorgb);
+//        mRS = RenderScript.create(this);
+//        mYUVScript = new ScriptC_yuvtorgb(mRS, getResources(), R.raw.yuvtorgb);
 
         // Hide the window title.
         requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -110,15 +117,21 @@ Camera.PreviewCallback {
     
     
 
-	private int[] rgbData = new int[480*800];
+	private byte[] rgbData = new byte[480*800*4];
 
-	
+	ByteBuffer frameBuffer;
+	private Bitmap bmp;
+
+	private int[] tmpRgbData = new int[480*800];
+
+	private byte[] callbackBuffer = new byte[(int) (480*800*2)];
+    
+   
 
     public Preview(Context context) {
         super(context);
-        
-        
-        
+        frameBuffer = makeByteBuffer(480*800*4);
+        bmp = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888);
         setSaturation();
         mSurfaceView = new SurfaceView(context);
         addView(mSurfaceView);
@@ -129,6 +142,12 @@ Camera.PreviewCallback {
         mHolder.addCallback(this);
         mHolder.setType(SurfaceHolder.SURFACE_TYPE_NORMAL);
     }
+    
+    public static ByteBuffer makeByteBuffer(int size) {
+		ByteBuffer bb = ByteBuffer.allocateDirect(size);
+		bb.position(0);
+		return bb;
+	}
 
     public void setCamera(Camera camera) {
         mCamera = camera;
@@ -192,6 +211,8 @@ Camera.PreviewCallback {
 
     public void surfaceCreated(SurfaceHolder holder) {
     	setWillNotDraw(true);
+    	mCamera.addCallbackBuffer(callbackBuffer);
+    	//mCamera.setPreviewCallbackWithBuffer(this);
     	mCamera.setPreviewCallback(this);
     }
 
@@ -241,20 +262,24 @@ Camera.PreviewCallback {
         // the preview.
     	
     	// YUV use 50% more space than RGB
-    	double yuvSize = w*h*1.5;
-    	RsCameraActivity.rsYuvData = Allocation.createSized(RsCameraActivity.mRS, Element.U8(RsCameraActivity.mRS),new Double(yuvSize).intValue());
-    	RsCameraActivity.rsRgbData = Allocation.createSized(RsCameraActivity.mRS, Element.U8(RsCameraActivity.mRS),new Double(yuvSize).intValue());
+//    	double yuvSize = w*h*1.5;
+//    	RsCameraActivity.rsYuvData = Allocation.createSized(RsCameraActivity.mRS, Element.U8(RsCameraActivity.mRS),new Double(yuvSize).intValue());
+//    	RsCameraActivity.rsRgbData = Allocation.createSized(RsCameraActivity.mRS, Element.U8(RsCameraActivity.mRS),new Double(yuvSize).intValue());
     	
         Camera.Parameters parameters = mCamera.getParameters();
         parameters.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
+        //parameters.setPreviewSize(480, 800);
         requestLayout();
 
         mCamera.setParameters(parameters);
         mCamera.startPreview();
     }
+    
+    final Paint p1 = new Paint();
 
 	@Override
 	public void onPreviewFrame(byte[] data, Camera camera) {
+		
 		Canvas c = null;
 
         if(mHolder == null){
@@ -262,18 +287,30 @@ Camera.PreviewCallback {
         }
 
         try {
-            //synchronized (mHolder) {
-        		RsCameraActivity.rsYuvData.copyFrom(data);
+            synchronized (mHolder) {
         		c = mHolder.lockCanvas();
                 
-                RsCameraActivity.mYUVScript.forEach_root(RsCameraActivity.rsYuvData, RsCameraActivity.rsRgbData);
-                //decodeYUV420SP(rgbData, data, 800, 480);
-                //filter(rgbData);
-                // TODO do renderscript based levels stuff here
-                RsCameraActivity.rsRgbData.copyTo(rgbData);
-                c.drawBitmap(rgbData, 0, 800, 0, 0, 800, 480, false, new Paint());
-
-            //}
+               /* NATIVE BASED YUV2RGB convert */
+        		long start = System.currentTimeMillis();
+                yuv420sp2rgb(data, 800, 480, 0, rgbData);
+                Log.i("TAG", "Conversion took " + (System.currentTimeMillis() - start) + " ms.");
+                frameBuffer.position(0);
+                frameBuffer.put(rgbData);
+				frameBuffer.position(0);
+               // filter(rgbData);
+               
+                bmp.copyPixelsFromBuffer(frameBuffer);
+                c.drawBitmap(bmp, 0, 0, p1);
+                
+        		
+        		/* JAVA BASED YUV2RGB convert */
+//                long start = System.currentTimeMillis();
+//                decodeYUV420SP(tmpRgbData, data, 800, 480);
+//                Log.i("TAG", "Conversion took " + (System.currentTimeMillis() - start) + " ms.");
+//                c.drawBitmap(tmpRgbData, 0, 800, 0, 0, 800, 480, true, new Paint());
+                
+           
+             }
         } finally {
             // do this in a finally so that if an exception is thrown
             // during the above, we don't leave the Surface in an
@@ -283,7 +320,8 @@ Camera.PreviewCallback {
             }
         }
 	}
-	
+
+	/** Java implementation of the yuv2wgb converter. It's at least twice as slow as NDK code on SGS2 */
 	static public void decodeYUV420SP(int[] rgb, byte[] yuv420sp, int width, int height) {
     	final int frameSize = width * height;
     	
@@ -343,47 +381,50 @@ Camera.PreviewCallback {
         satMatrix.set(2, 2, oneMinusS * bWeight + mSaturation);
     }
 	
-	private void filter(int[] mInPixels) {
-        final float[] m = satMatrix.getArray();
-
-        for (int i=0; i < mInPixels.length; i++) {
-            float r = (float)(mInPixels[i] & 0xff);
-            float g = (float)((mInPixels[i] >> 8) & 0xff);
-            float b = (float)((mInPixels[i] >> 16) & 0xff);
-
-            float tr = r * m[0] + g * m[3] + b * m[6];
-            float tg = r * m[1] + g * m[4] + b * m[7];
-            float tb = r * m[2] + g * m[5] + b * m[8];
-            r = tr;
-            g = tg;
-            b = tb;
-
-            if (r < 0.f) r = 0.f;
-            if (r > 255.f) r = 255.f;
-            if (g < 0.f) g = 0.f;
-            if (g > 255.f) g = 255.f;
-            if (b < 0.f) b = 0.f;
-            if (b > 255.f) b = 255.f;
-
-            r = (r - mInBlack) * mOverInWMinInB;
-            g = (g - mInBlack) * mOverInWMinInB;
-            b = (b - mInBlack) * mOverInWMinInB;
-
-
-            r = (r * mOutWMinOutB) + mOutBlack;
-            g = (g * mOutWMinOutB) + mOutBlack;
-            b = (b * mOutWMinOutB) + mOutBlack;
-
-            if (r < 0.f) r = 0.f;
-            if (r > 255.f) r = 255.f;
-            if (g < 0.f) g = 0.f;
-            if (g > 255.f) g = 255.f;
-            if (b < 0.f) b = 0.f;
-            if (b > 255.f) b = 255.f;
-
-            mInPixels[i] = ((int)r) + (((int)g) << 8) + (((int)b) << 16)
-                            + (mInPixels[i] & 0xff000000);
-        }
-
-    }
+//	private void filter(int[] mInPixels) {
+//        final float[] m = satMatrix.getArray();
+//
+//        for (int i=0; i < mInPixels.length; i++) {
+//            float r = (float)(mInPixels[i] & 0xff);
+//            float g = (float)((mInPixels[i] >> 8) & 0xff);
+//            float b = (float)((mInPixels[i] >> 16) & 0xff);
+//
+//            float tr = r * m[0] + g * m[3] + b * m[6];
+//            float tg = r * m[1] + g * m[4] + b * m[7];
+//            float tb = r * m[2] + g * m[5] + b * m[8];
+//            r = tr;
+//            g = tg;
+//            b = tb;
+//
+//            if (r < 0.f) r = 0.f;
+//            if (r > 255.f) r = 255.f;
+//            if (g < 0.f) g = 0.f;
+//            if (g > 255.f) g = 255.f;
+//            if (b < 0.f) b = 0.f;
+//            if (b > 255.f) b = 255.f;
+//
+//            r = (r - mInBlack) * mOverInWMinInB;
+//            g = (g - mInBlack) * mOverInWMinInB;
+//            b = (b - mInBlack) * mOverInWMinInB;
+//
+//
+//            r = (r * mOutWMinOutB) + mOutBlack;
+//            g = (g * mOutWMinOutB) + mOutBlack;
+//            b = (b * mOutWMinOutB) + mOutBlack;
+//
+//            if (r < 0.f) r = 0.f;
+//            if (r > 255.f) r = 255.f;
+//            if (g < 0.f) g = 0.f;
+//            if (g > 255.f) g = 255.f;
+//            if (b < 0.f) b = 0.f;
+//            if (b > 255.f) b = 255.f;
+//
+//            mInPixels[i] = ((int)r) + (((int)g) << 8) + (((int)b) << 16)
+//                            + (mInPixels[i] & 0xff000000);
+//        }
+//
+//    }
+	
+	
+	private native void yuv420sp2rgb(byte[] in, int width, int height, int textureSize, byte[] out);
 }

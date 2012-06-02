@@ -8,21 +8,22 @@ const bytes_per_pixel = 2;
 
 void root(const int *in, int *out, uint32_t x, uint32_t y) {
 	
-		int i, j;
+	int i, j, total;
         int nR, nG, nB;
         int nY, nU, nV;
         int offset = 0;
             
     	i = x / width;
     	j = x % height;
+	total = width*height;
     
 //        nY = *(pY + i * width + j);
 //        nV = *(pUV + (i/2) * width + bytes_per_pixel * (j/2));
 //        nU = *(pUV + (i/2) * width + bytes_per_pixel * (j/2) + 1);
 
-		nY = in[i * width + j];
-        nV = in[(i/2) * width + bytes_per_pixel * (j/2)];
-        nU = in[(i/2) * width + bytes_per_pixel * (j/2) + 1];
+	nY = *(in + i * width + j);
+        nV = *(in + total + (i/2) * width + bytes_per_pixel * (j/2));
+        nU = *(in + total + (i/2) * width + bytes_per_pixel * (j/2) + 1);
     
         // Yuv Convert
         nY -= 16;
