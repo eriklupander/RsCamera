@@ -13,7 +13,6 @@ import android.hardware.Camera.CameraInfo;
 import android.hardware.Camera.Size;
 import android.os.Bundle;
 import android.renderscript.Matrix3f;
-import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -21,6 +20,23 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 
+/**
+ * Main "camera" activity. Currently overrides onPreviewFrame, performing yuv to rgb(a) conversion
+ * using call over JNI to a C function which is at least twice as fast as doing it in Java/Dalvik.
+ * 
+ * Roughy, the native code need 25-30ms for a single 800x480 frame which the Java version need ~60ms on average with large
+ * deviations.
+ * 
+ * The current implementation uses the "old" way of getting preview frame data, e.g. through the supplied data byte array. This
+ * need to be changed so it uses a pre-allocated buffer instead. This is a known problem which makes GC:s happen every two frames,
+ * freeing up about 1.1mb of RAM with a latency of ~10ms.
+ * 
+ * Most of the code in this Activity is a mishmash of stuff from the Android SDK samples, things I found on StackOverflow and the 
+ * yuv2rgb conversion is a derivative of what I found in the http://code.google.com/p/andar/ project.
+ * 
+ * @author Erik
+ *
+ */
 public class RsCameraActivity extends Activity {
 	
 	static {
@@ -34,9 +50,6 @@ public class RsCameraActivity extends Activity {
 
     // The first rear facing camera
     int defaultCameraId;
-    
-	
-	
     
 //    static RenderScript mRS;
 //    static ScriptC_yuvtorgb mYUVScript;
@@ -118,11 +131,11 @@ Camera.PreviewCallback {
     
 
 	private byte[] rgbData = new byte[480*800*4];
-
-	ByteBuffer frameBuffer;
+	private ByteBuffer frameBuffer;
 	private Bitmap bmp;
 
-	private int[] tmpRgbData = new int[480*800];
+	// Used when running yuv2rgb in java code
+	//private int[] tmpRgbData = new int[480*800];
 
 	private byte[] callbackBuffer = new byte[(int) (480*800*2)];
     
@@ -268,7 +281,6 @@ Camera.PreviewCallback {
     	
         Camera.Parameters parameters = mCamera.getParameters();
         parameters.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
-        //parameters.setPreviewSize(480, 800);
         requestLayout();
 
         mCamera.setParameters(parameters);
@@ -290,10 +302,11 @@ Camera.PreviewCallback {
             synchronized (mHolder) {
         		c = mHolder.lockCanvas();
                 
-               /* NATIVE BASED YUV2RGB convert */
-        		long start = System.currentTimeMillis();
-                yuv420sp2rgb(data, 800, 480, 0, rgbData);
-                Log.i("TAG", "Conversion took " + (System.currentTimeMillis() - start) + " ms.");
+               /* NATIVE BASED YUV2RGB conversion */
+        		/* TODO make this more effective. Perhaps feed frameBuffer.array() into the yuv420sp2rgb function directly? */
+        		//long start = System.currentTimeMillis();
+                yuv420sp2rgb(data, 800, 480, rgbData);
+                //Log.i("TAG", "Conversion took " + (System.currentTimeMillis() - start) + " ms.");
                 frameBuffer.position(0);
                 frameBuffer.put(rgbData);
 				frameBuffer.position(0);
@@ -426,5 +439,5 @@ Camera.PreviewCallback {
 //    }
 	
 	
-	private native void yuv420sp2rgb(byte[] in, int width, int height, int textureSize, byte[] out);
+	private native void yuv420sp2rgb(byte[] in, int width, int height, byte[] out);
 }
