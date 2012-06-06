@@ -7,12 +7,14 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.ImageFormat;
 import android.graphics.Paint;
 import android.hardware.Camera;
 import android.hardware.Camera.CameraInfo;
 import android.hardware.Camera.Size;
 import android.os.Bundle;
 import android.renderscript.Matrix3f;
+import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -137,8 +139,9 @@ Camera.PreviewCallback {
 	// Used when running yuv2rgb in java code
 	//private int[] tmpRgbData = new int[480*800];
 
-	private byte[] callbackBuffer = new byte[(int) (480*800*2)];
-    
+	private static byte[] callbackBuffer = new byte[(int) (576000)];
+	private static byte[] callbackBuffer2 = new byte[(int) (576000)];
+	private static boolean buffer1 = true;
    
 
     public Preview(Context context) {
@@ -225,8 +228,9 @@ Camera.PreviewCallback {
     public void surfaceCreated(SurfaceHolder holder) {
     	setWillNotDraw(true);
     	mCamera.addCallbackBuffer(callbackBuffer);
-    	//mCamera.setPreviewCallbackWithBuffer(this);
-    	mCamera.setPreviewCallback(this);
+    	mCamera.addCallbackBuffer(callbackBuffer2);
+    	mCamera.setPreviewCallbackWithBuffer(this);
+    	//mCamera.setPreviewCallback(this);
     }
 
     public void surfaceDestroyed(SurfaceHolder holder) {
@@ -281,6 +285,7 @@ Camera.PreviewCallback {
     	
         Camera.Parameters parameters = mCamera.getParameters();
         parameters.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
+        //parameters.setPreviewFormat(ImageFormat.RGB_565);
         requestLayout();
 
         mCamera.setParameters(parameters);
@@ -297,9 +302,11 @@ Camera.PreviewCallback {
         if(mHolder == null){
             return;
         }
-
+        
+       
         try {
             synchronized (mHolder) {
+            	
         		c = mHolder.lockCanvas();
                 
                /* NATIVE BASED YUV2RGB conversion */
@@ -314,7 +321,7 @@ Camera.PreviewCallback {
                
                 bmp.copyPixelsFromBuffer(frameBuffer);
                 c.drawBitmap(bmp, 0, 0, p1);
-                
+               
         		
         		/* JAVA BASED YUV2RGB convert */
 //                long start = System.currentTimeMillis();
@@ -322,7 +329,12 @@ Camera.PreviewCallback {
 //                Log.i("TAG", "Conversion took " + (System.currentTimeMillis() - start) + " ms.");
 //                c.drawBitmap(tmpRgbData, 0, 800, 0, 0, 800, 480, true, new Paint());
                 
-           
+                buffer1 = !buffer1;
+                if(buffer1) {
+                	mCamera.addCallbackBuffer(callbackBuffer2);
+                } else {
+                	mCamera.addCallbackBuffer(callbackBuffer);
+                }
              }
         } finally {
             // do this in a finally so that if an exception is thrown
@@ -332,6 +344,7 @@ Camera.PreviewCallback {
                 mHolder.unlockCanvasAndPost(c);
             }
         }
+        
 	}
 
 	/** Java implementation of the yuv2wgb converter. It's at least twice as slow as NDK code on SGS2 */
